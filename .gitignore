@@ -4,3 +4,6 @@
 *.jar
 *.war
 *.ear
+/SimpleJarUpdater/nbproject/private/
+/build/
+/dist/
