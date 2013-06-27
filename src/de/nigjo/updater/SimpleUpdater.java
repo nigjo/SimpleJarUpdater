@@ -1,5 +1,5 @@
 /**
- *
+ * licensed under LGPL 3.0
  */
 package de.nigjo.updater;
 
@@ -46,17 +46,95 @@ import java.util.logging.Logger;
  */
 public class SimpleUpdater
 {
+  //<editor-fold defaultstate="collapsed" desc="Phase 1: prepare updater">
   private static final String DEFAULT_UPDATER_PREFIX =
       SimpleUpdater.class.getSimpleName();
   public static final String PROP_UPDATER_PREFIX =
       SimpleUpdater.class.getName() + ".prefix";
+
+  /**
+   * Startet den Updatevorgang. Es wird zunaechst
+   *
+   * @param remoteLocation entfernter Speicherort der Jar-Datei, die die
+   * bisherige lokale Datei ersetzen soll. Sollte das http Protokoll fuer diese
+   * URL verwendet werden, sollte die URL oeffentlich ohne Login zugaenglich
+   * sein.
+   * @param localDestination Lokaler Speicherort an den die Jar kopiert werden
+   * soll.
+   * @param restartArguments Liste der Argumente mit dem die aktualisierte Jar
+   * gestartet werden soll.
+   *
+   * @see SimpleUpdater Detailbeschreibung im Klassenkommentar
+   */
+  public static void update(URL remoteLocation, Path localDestination,
+      String... restartArguments)
+      throws IOException
+  {
+    Path tempJarFile;
+
+    String prefix = System.getProperty(PROP_UPDATER_PREFIX);
+    if(prefix == null || prefix.isEmpty())
+      prefix = DEFAULT_UPDATER_PREFIX;
+    tempJarFile = Files.createTempFile(prefix, ".jar");
+
+    Manifest mf = new Manifest();
+    Attributes mainAttributes = mf.getMainAttributes();
+    mainAttributes.put(Attributes.Name.MANIFEST_VERSION, "1.0");
+    mainAttributes.put(Attributes.Name.MAIN_CLASS,
+        SimpleUpdater.class.getName());
+
+    Attributes updaterSection = new Attributes();
+    mf.getEntries().put(
+        SimpleUpdater.class.getPackage().getName().replace('.', '/') + '/',
+        updaterSection);
+    updaterSection.putValue("Remote", remoteLocation.toString());
+    updaterSection.putValue("Local-Name",
+        localDestination.getFileName().toString());
+
+    try(InputStream self = SimpleUpdater.class.getResourceAsStream(
+        SimpleUpdater.class.getSimpleName() + ".class");
+        JarOutputStream tempUpdater = new JarOutputStream(
+        Files.newOutputStream(tempJarFile), mf))
+    {
+      //Create updater
+      JarEntry jarEntry = new JarEntry(
+          SimpleUpdater.class.getName().replace('.', '/') + ".class");
+      tempUpdater.putNextEntry(jarEntry);
+      byte[] buffer = new byte[2048];
+      int count;
+      while(0 <= (count = self.read(buffer)))
+        tempUpdater.write(buffer, 0, count);
+    }
+
+    //Start updater
+    List<String> restartCommand = new ArrayList<>();
+    Path executable = getJavaExecutable();
+    restartCommand.add(executable.toAbsolutePath().toString());
+
+    restartCommand.add("-jar");
+    restartCommand.add(tempJarFile.toString());
+
+    restartCommand.add("--remote");
+    restartCommand.add(remoteLocation.toString());
+
+    restartCommand.add("--local");
+    restartCommand.add(localDestination.toAbsolutePath().toString());
+
+    if(restartArguments.length > 0)
+    {
+      restartCommand.add("--args");
+      restartCommand.addAll(Arrays.asList(restartArguments));
+    }
+
+    ProcessBuilder updater = new ProcessBuilder(restartCommand).inheritIO();
+    updater.start();
+  }
+  //</editor-fold>
+
+  //<editor-fold defaultstate="collapsed" desc="Phase 2: download and restart">
   private URL remoteLocation;
   private Path localDestination;
   private String[] restartArguments;
-
-  private SimpleUpdater()
-  {
-  }
 
   /**
    * Startet das Update. Diese Methode sollte niemals direkt aufgerufen werden.
@@ -146,84 +224,6 @@ public class SimpleUpdater
     restarter.start();
   }
 
-  /**
-   * Startet den Updatevorgang. Es wird zunaechst
-   *
-   * @param remoteLocation entfernter Speicherort der Jar-Datei, die die
-   * bisherige lokale Datei ersetzen soll. Sollte das http Protokoll fuer diese
-   * URL verwendet werden, sollte die URL oeffentlich ohne Login zugaenglich
-   * sein.
-   * @param localDestination Lokaler Speicherort an den die Jar kopiert werden
-   * soll.
-   * @param restartArguments Liste der Argumente mit dem die aktualisierte Jar
-   * gestartet werden soll.
-   *
-   * @see SimpleUpdater Detailbeschreibung im Klassenkommentar
-   */
-  public static void update(URL remoteLocation, Path localDestination,
-      String... restartArguments)
-      throws IOException
-  {
-    Path tempJarFile;
-
-    String prefix = System.getProperty(PROP_UPDATER_PREFIX);
-    if(prefix == null || prefix.isEmpty())
-      prefix = DEFAULT_UPDATER_PREFIX;
-    tempJarFile = Files.createTempFile(prefix, ".jar");
-
-    Manifest mf = new Manifest();
-    Attributes mainAttributes = mf.getMainAttributes();
-    mainAttributes.put(Attributes.Name.MANIFEST_VERSION, "1.0");
-    mainAttributes.put(Attributes.Name.MAIN_CLASS,
-        SimpleUpdater.class.getName());
-
-    Attributes updaterSection = new Attributes();
-    mf.getEntries().put(
-        SimpleUpdater.class.getPackage().getName().replace('.', '/') + '/',
-        updaterSection);
-    updaterSection.putValue("Remote", remoteLocation.toString());
-    updaterSection.putValue("Local-Name",
-        localDestination.getFileName().toString());
-
-    try(InputStream self = SimpleUpdater.class.getResourceAsStream(
-        SimpleUpdater.class.getSimpleName() + ".class");
-        JarOutputStream tempUpdater = new JarOutputStream(
-        Files.newOutputStream(tempJarFile), mf))
-    {
-      //Create updater
-      JarEntry jarEntry = new JarEntry(
-          SimpleUpdater.class.getName().replace('.', '/') + ".class");
-      tempUpdater.putNextEntry(jarEntry);
-      byte[] buffer = new byte[2048];
-      int count;
-      while(0 <= (count = self.read(buffer)))
-        tempUpdater.write(buffer, 0, count);
-    }
-
-    //Start updater
-    List<String> restartCommand = new ArrayList<>();
-    Path executable = getJavaExecutable();
-    restartCommand.add(executable.toAbsolutePath().toString());
-
-    restartCommand.add("-jar");
-    restartCommand.add(tempJarFile.toString());
-
-    restartCommand.add("--remote");
-    restartCommand.add(remoteLocation.toString());
-
-    restartCommand.add("--local");
-    restartCommand.add(localDestination.toAbsolutePath().toString());
-
-    if(restartArguments.length > 0)
-    {
-      restartCommand.add("--args");
-      restartCommand.addAll(Arrays.asList(restartArguments));
-    }
-
-    ProcessBuilder updater = new ProcessBuilder(restartCommand).inheritIO();
-    updater.start();
-  }
-
   private void parseCommandLine(String[] args)
       throws MalformedURLException, IndexOutOfBoundsException
   {
@@ -251,21 +251,9 @@ public class SimpleUpdater
       restartArguments = new String[0];
     }
   }
+  //</editor-fold>
 
-  private static Path getJavaExecutable()
-  {
-    Object debug = System.getProperties();
-    String javaHome = System.getProperty("java.home");
-    Path executable = Paths.get(javaHome, "bin", "java");
-    if(System.console() == null)
-    {
-      Path windowsExe = executable.resolveSibling("javaw.exe");
-      if(Files.exists(windowsExe))
-        executable = windowsExe;
-    }
-    return executable;
-  }
-
+  //<editor-fold defaultstate="collapsed" desc="public utilities">
   /**
    * Ermittelt den Pfad der Jar-Datei in der die Klasse enthalten ist.
    *
@@ -358,5 +346,24 @@ public class SimpleUpdater
 
     return uptodate;
   }
+  //</editor-fold>
 
+  //<editor-fold defaultstate="collapsed" desc="private utilities">
+  private SimpleUpdater()
+  {
+  }
+
+  private static Path getJavaExecutable()
+  {
+    String javaHome = System.getProperty("java.home");
+    Path executable = Paths.get(javaHome, "bin", "java");
+    if(System.console() == null)
+    {
+      Path windowsExe = executable.resolveSibling("javaw.exe");
+      if(Files.exists(windowsExe))
+        executable = windowsExe;
+    }
+    return executable;
+  }
+  //</editor-fold>
 }
